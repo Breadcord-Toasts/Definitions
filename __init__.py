@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands
 
 import breadcord
+from breadcord.helpers import simple_button
 
 
 @dataclass
@@ -24,9 +25,37 @@ class Word:
     meanings: list[Meaning]
 
 
+class AuthorDeleteView(discord.ui.View):
+    def __init__(self, author_id: int | None = None):
+        super().__init__(timeout=None)
+        self.author_id = author_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.author_id is None:
+            return await super().interaction_check(interaction)
+        return interaction.user.id == self.author_id
+
+    @simple_button(label="Delete", style=discord.ButtonStyle.red, emoji="🗑️")
+    async def delete(self, interaction: discord.Interaction, _):
+        await interaction.response.defer()
+        await interaction.message.delete()
+
+
+def clean_for_url(word: str) -> str:
+    return "".join(filter(lambda x: x.isalnum() or x.isspace(), word.lower().strip()))
+
+
+def most_comprehensive(words: list[Word]) -> Word:
+    return max(words, key=lambda x: len(x.word))
+
+
 class Definitions(breadcord.helpers.HTTPModuleCog):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.bot.add_view(AuthorDeleteView())
+
     async def get_dictionary_def(self, word: str) -> list[Word] | None:
-        word = "".join(filter(lambda x: x.isalnum() or x.isspace(), word.lower().strip()))
+        word = clean_for_url(word)
         async with self.session.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}") as response:
             if not response.ok:
                 return
@@ -66,7 +95,7 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         return words or None
 
     async def get_urban_dictionary_def(self, word: str) -> list[Word] | None:
-        word = "".join(filter(lambda x: x.isalnum() or x.isspace(), word.lower().strip()))
+        word = clean_for_url(word)
         async with self.session.get(f"https://api.urbandictionary.com/v0/define?term={word}") as response:
             if not response.ok:
                 return
@@ -76,40 +105,47 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
                 return
 
         def cleanup_ud_def(text: str) -> str:
-            # Some words will have square brackets surrounding them
-            return re.sub(
-                r"\[(.*?)]",
-                r"\1",
-                text,
-            )
+            # Some words will have square brackets surrounding them, I think they're meant to be hyperlinks on the site
+            return re.sub(r"\[(.*?)]", r"\1", text)
 
-        words: list[Word] = []
-        for word_data in data:
-            words.append(Word(
-                word=word_data["word"],
-                phonetic_str=None,
-                phonetic_audio_url=None,
-                meanings=[Meaning(
-                    word_class=None,
-                    definition=cleanup_ud_def(word_data["definition"]),
-                    example=cleanup_ud_def(word_data.get("example") or "") or None,
-                    synonyms=[],
-                    antonyms=[],
-                )],
-            ))
-        return words or None
+        meanings = [
+            Meaning(
+                word_class=None,
+                definition=cleanup_ud_def(word_data["definition"]),
+                example=cleanup_ud_def(word_data.get("example") or "") or None,
+                synonyms=[],
+                antonyms=[]
+            )
+            for word_data in data
+            if word_data["word"].lower() == word.lower()
+        ]
+        return [Word(
+            word=data[0]["word"],
+            meanings=meanings,
+            phonetic_str=None,
+            phonetic_audio_url=None,
+        )] if meanings else None
 
     @staticmethod
     def build_word_embed(word: Word) -> discord.Embed:
         embed = discord.Embed(
             title=word.word,
-            description=word.phonetic_str,
+            description=(
+                f"[`{word.phonetic_str}`]({word.phonetic_audio_url})"
+                if word.phonetic_audio_url else
+                f"`{word.phonetic_str}`"
+            ) if word.phonetic_str else None,
             color=discord.Color.blurple(),
         )
 
-        for meaning in word.meanings[:6]:
+        average_length = sum(len(meaning.definition + (meaning.example or "")) for meaning in word.meanings)
+        average_length //= len(word.meanings)
+        number = max(1, min(6, round(
+            -average_length / 60 + 7
+        )))
+        for i, meaning in enumerate(word.meanings[:number]):
             embed.add_field(
-                name=f"{meaning.word_class or 'Unknown'}",
+                name=meaning.word_class or f"Meaning {i + 1}",
                 value="\n".join(line for line in (
                     f"**Definition:** {meaning.definition}",
                     f"**Example:** {meaning.example}" if meaning.example else None,
@@ -121,15 +157,46 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
 
         return embed
 
-    @commands.hybrid_command()
-    async def define(self, ctx: commands.Context, *, query: str):
-        words = await self.get_dictionary_def(query)
+    async def normal_embed(self, word: str) -> discord.Embed | None:
+        words = await self.get_dictionary_def(word)
         if not words:
-            words = await self.get_urban_dictionary_def(query)
-        if not words:
-            return await ctx.send("No definitions found for that word")
+            return None
 
-        await ctx.send(embed=self.build_word_embed(words[0]))
+        embed = self.build_word_embed(most_comprehensive(words))
+        embed.set_footer(text="Definitions sourced from Dictionary API")
+        return embed
+
+    async def urban_dictionary_embed(self, word: str) -> discord.Embed | None:
+        words = await self.get_urban_dictionary_def(word)
+        if not words:
+            return None
+
+        embed = self.build_word_embed(most_comprehensive(words))
+        embed.colour = 0xEFFF00
+        embed.set_footer(text="Definitions sourced from Urban Dictionary")
+        return embed
+
+    @commands.hybrid_command()
+    async def define(self, ctx: commands.Context, *, query: str, urban: bool = False):
+        if not query:
+            return await ctx.reply("You need to provide a word to define")
+
+        deletable = False
+        embed = None
+        if not urban:
+            embed = await self.normal_embed(query)
+        if urban or not embed:
+            embed = await self.urban_dictionary_embed(query)
+            deletable = True
+        if urban and not embed:
+            embed = await self.normal_embed(query)
+        if not embed:
+            return await ctx.reply("No definitions found for that word")
+
+        await ctx.reply(
+            embed=embed,
+            view=AuthorDeleteView(ctx.author.id) if deletable else None,
+        )
 
 
 async def setup(bot: breadcord.Bot):
