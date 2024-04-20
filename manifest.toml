@@ -3,6 +3,6 @@ manifest_version = 1
 [module]
 name = "Definitions"
 id = "breadcord_definitions"
-version = "0.0.1"
+version = "1.0.0"
 license = "GNU GPLv3"
 authors = ["Fripe"]
