@@ -45,10 +45,6 @@ def clean_for_url(word: str) -> str:
     return "".join(filter(lambda x: x.isalnum() or x.isspace(), word.lower().strip()))
 
 
-def most_comprehensive(words: list[Word]) -> Word:
-    return max(words, key=lambda x: len(x.word))
-
-
 class Definitions(breadcord.helpers.HTTPModuleCog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -126,32 +122,47 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
             phonetic_audio_url=None,
         )] if meanings else None
 
-    @staticmethod
-    def build_word_embed(word: Word) -> discord.Embed:
+    def build_word_embed(self, word: Word) -> discord.Embed:
+        def get_phonetic() -> str | None:
+            if word.phonetic_str and word.phonetic_audio_url:
+                return f"[`{word.phonetic_str}`]({word.phonetic_audio_url})"
+            if word.phonetic_str and not word.phonetic_audio_url:
+                return f"`{word.phonetic_str}`"
+            if not word.phonetic_str and word.phonetic_audio_url:
+                return f"[Pronunciation]({word.phonetic_audio_url})"
+            return None
+
         embed = discord.Embed(
             title=word.word,
-            description=(
-                f"[`{word.phonetic_str}`]({word.phonetic_audio_url})"
-                if word.phonetic_audio_url else
-                f"`{word.phonetic_str}`"
-            ) if word.phonetic_str else None,
+            description=get_phonetic(),
             color=discord.Color.blurple(),
         )
 
-        average_length = sum(len(meaning.definition + (meaning.example or "")) for meaning in word.meanings)
-        average_length //= len(word.meanings)
-        number = max(1, min(6, round(
-            -average_length / 60 + 7
-        )))
-        for i, meaning in enumerate(word.meanings[:number]):
+        def field_text(word_meaning: Meaning) -> str:
+            return "\n".join(line for line in (
+                f"**Definition:** {word_meaning.definition}",
+                f"**Example:** {word_meaning.example}" if word_meaning.example else None,
+                f"**Synonyms:** {', '.join(word_meaning.synonyms)}" if word_meaning.synonyms else None,
+                f"**Antonyms:** {', '.join(word_meaning.antonyms)}" if word_meaning.antonyms else None,
+            ) if line)
+
+        fields = [field_text(word.meanings[0])]
+        for meaning in word.meanings[1:]:
+            to_add = field_text(meaning)
+            if sum(len(field) for field in fields) + len(to_add) <= self.settings.max_meanings_length.value:
+                fields.append(to_add)
+
+        if len(fields) > 1:
+            for n, (meaning, field) in enumerate(zip(word.meanings, fields), start=1):
+                embed.add_field(
+                    name=meaning.word_class or f"Meaning {n}",
+                    value=field,
+                    inline=False,
+                )
+        else:
             embed.add_field(
-                name=meaning.word_class or f"Meaning {i + 1}",
-                value="\n".join(line for line in (
-                    f"**Definition:** {meaning.definition}",
-                    f"**Example:** {meaning.example}" if meaning.example else None,
-                    f"**Synonyms:** {', '.join(meaning.synonyms)}" if meaning.synonyms else None,
-                    f"**Antonyms:** {', '.join(meaning.antonyms)}" if meaning.antonyms else None,
-                ) if line),
+                name=word.meanings[0].word_class or "Meaning",
+                value=fields[0],
                 inline=False,
             )
 
@@ -162,7 +173,7 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         if not words:
             return None
 
-        embed = self.build_word_embed(most_comprehensive(words))
+        embed = self.build_word_embed(words[0])
         embed.set_footer(text="Definitions sourced from Dictionary API")
         return embed
 
@@ -171,7 +182,7 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         if not words:
             return None
 
-        embed = self.build_word_embed(most_comprehensive(words))
+        embed = self.build_word_embed(words[0])
         embed.colour = 0xEFFF00
         embed.set_footer(text="Definitions sourced from Urban Dictionary")
         return embed

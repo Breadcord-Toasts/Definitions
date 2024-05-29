@@ -1,0 +1,2 @@
+# The maximum amount of characters that can be taken up by word meanings
+max_meanings_length = 500
