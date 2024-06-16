@@ -193,6 +193,7 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         urban="Whether to source the definition from Urban Dictionary",
     )
     async def define(self, ctx: commands.Context, *, query: str, urban: bool = False):
+        query = query.strip()
         if not query:
             return await ctx.reply("You need to provide a word to define")
 
