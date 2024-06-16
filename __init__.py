@@ -187,7 +187,11 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         embed.set_footer(text="Definitions sourced from Urban Dictionary")
         return embed
 
-    @commands.hybrid_command()
+    @commands.hybrid_command(aliases=["def"])
+    @discord.app_commands.describe(
+        query="The word to define",
+        urban="Whether to source the definition from Urban Dictionary",
+    )
     async def define(self, ctx: commands.Context, *, query: str, urban: bool = False):
         if not query:
             return await ctx.reply("You need to provide a word to define")
