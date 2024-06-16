@@ -139,12 +139,15 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         )
 
         def field_text(word_meaning: Meaning) -> str:
-            return "\n".join(line for line in (
+            def_str = "\n".join(line for line in (
                 f"**Definition:** {word_meaning.definition}",
                 f"**Example:** {word_meaning.example}" if word_meaning.example else None,
                 f"**Synonyms:** {', '.join(word_meaning.synonyms)}" if word_meaning.synonyms else None,
                 f"**Antonyms:** {', '.join(word_meaning.antonyms)}" if word_meaning.antonyms else None,
             ) if line)
+            if len(def_str) > 1024:
+                return f"{def_str[:1024 - 3]}..."
+            return def_str
 
         fields = [field_text(word.meanings[0])]
         for meaning in word.meanings[1:]:
