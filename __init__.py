@@ -218,5 +218,5 @@ class Definitions(breadcord.helpers.HTTPModuleCog):
         )
 
 
-async def setup(bot: breadcord.Bot):
-    await bot.add_cog(Definitions("breadcord_definitions"))
+async def setup(bot: breadcord.Bot, module: breadcord.module.Module) -> None:
+    await bot.add_cog(Definitions(module.id))
